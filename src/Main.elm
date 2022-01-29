@@ -8,7 +8,9 @@ import Element exposing (Element)
 import Element.Background
 import Element.Border
 import Element.Font
+import Element.Input
 
+import Ui
 
 ---- MODEL ----
 
@@ -19,12 +21,21 @@ type alias Model =
     }
 
 type alias Named a =
-    { id : String
-    , names : List String
-    , value : a
+    { a
+        | id : String
+        , names : List String
     }
 
-type Item
+type alias Item =
+    { mode : ItemMode
+    , details : ItemDetails
+    }
+
+type ItemMode
+    = ViewItemMode
+    | EditItemMode
+
+type ItemDetails
     = MissingItem
     | DocumentItem DocumentItemData
 
@@ -39,16 +50,18 @@ init =
         initItem =
             { id = "1"
             , names = []
-            , value = DocumentItem
-                { text = "Hello, world!"
-                }
+            , mode = ViewItemMode
+            , details =
+                DocumentItem
+                    { text = "Hello, world!"
+                    }
             }
         
         initModel : Model
         initModel =
             { items =
                 Dict.fromList
-                    [ ( "1", initItem)
+                    [ ( "1", initItem )
                     ]
             , bundle =
                 [ "1"
@@ -63,12 +76,26 @@ init =
 
 
 type Msg
-    = NoOp
+    = UserEditItem String
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
-    ( model, Cmd.none )
+    case msg of
+        UserEditItem id ->
+            let
+                setEditMode : Named Item -> Named Item
+                setEditMode item =
+                    { item | mode = EditItemMode }
+                
+                newModel =
+                    { model
+                        | items =
+                            model.items
+                                |> Dict.update id (Maybe.map setEditMode)
+                    }
+            in
+            ( newModel, Cmd.none )
 
 
 
@@ -83,11 +110,13 @@ view model =
             ]
         ]
         ( Element.column
-            []
+            [ Element.padding 10
+            , Element.spacing 10
+            ]
             ( List.map ( viewItemReference model.items ) model.bundle )
         )
 
-viewItemReference : Dict String ( Named Item ) -> String -> Element msg
+viewItemReference : Dict String ( Named Item ) -> String -> Element Msg
 viewItemReference items ref =
     let
         item : Named Item
@@ -97,7 +126,8 @@ viewItemReference items ref =
                 |> Maybe.withDefault
                     { id = ""
                     , names = []
-                    , value = MissingItem
+                    , mode = ViewItemMode
+                    , details = MissingItem
                     }
         
         readableName : String
@@ -108,7 +138,7 @@ viewItemReference items ref =
         
         itemClassName : String
         itemClassName =
-            case item.value of
+            case item.details of
                 MissingItem ->
                     "MISSING"
                 
@@ -125,28 +155,69 @@ viewItemReference items ref =
             ]
                 |> String.join " "
     in
-    Element.column
-        [ Element.Font.alignLeft
-        , Element.Border.color <| Element.rgb255 0 0 0
-        , Element.Border.width 1
-        ]
-        [ Element.el
-            [ Element.padding 5
-            , Element.width <| Element.fill
-            , Element.Background.color <| Element.rgb255 75 75 125
-            , Element.Font.color <| Element.rgb255 225 225 225
-            ]
-            ( Element.text fullyQualifiedName )
-        , Element.el
-            [ Element.padding 5
-            , Element.width <| Element.fill
-            ]
-            ( viewItemValue item.value )
-        ]
+    case item.mode of
+        ViewItemMode ->
+            Ui.cell
+                [ Element.row
+                    [ Element.padding 5
+                    , Element.width <| Element.fill
+                    , Element.Background.color <| Element.rgb255 75 75 75
+                    , Element.Font.color <| Element.rgb255 225 225 225
+                    ]
+                    [ Element.el
+                        [ Element.alignLeft
+                        ]
+                        ( Element.text fullyQualifiedName )
+                    , Element.Input.button
+                        [ Element.alignRight
+                        ]
+                        { onPress = Just <| UserEditItem item.id
+                        , label = Element.text "✏️"
+                        }
+                    ]
+                , Element.el
+                    [ Element.padding 5
+                    , Element.width <| Element.fill
+                    ]
+                    ( viewItemDetails item.details )
+                ]
+        
+        EditItemMode ->
+            Ui.cell
+                [ Element.row
+                    [ Element.padding 5
+                    , Element.width <| Element.fill
+                    , Element.Background.color <| Element.rgb255 75 75 75
+                    , Element.Font.color <| Element.rgb255 225 225 225
+                    ]
+                    [ Element.el
+                        [ Element.alignLeft
+                        ]
+                        ( Element.text fullyQualifiedName )
+                    ]
+                , Element.el
+                    [ Element.padding 5
+                    , Element.width <| Element.fill
+                    ]
+                    ( viewItemDetails item.details )
+                , Element.row
+                    []
+                    [ Element.Input.button
+                        []
+                        { onPress = Nothing
+                        , label = Element.text "Save"
+                        }
+                    , Element.Input.button
+                        []
+                        { onPress = Nothing
+                        , label = Element.text "Cancel"
+                        }
+                    ]
+                ]
 
-viewItemValue : Item -> Element msg
-viewItemValue item =
-    case item of
+viewItemDetails : ItemDetails -> Element msg
+viewItemDetails details =
+    case details of
         MissingItem ->
             Element.none
         
