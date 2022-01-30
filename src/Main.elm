@@ -27,7 +27,9 @@ type alias Named a =
     }
 
 type alias Item =
-    { mode : ItemMode
+    { id : String
+    , names : List String
+    , mode : ItemMode
     , details : ItemDetails
     }
 
@@ -41,7 +43,26 @@ type ItemDetails
 
 type alias DocumentItemData =
     { text : String
+    , workingText : Maybe String
     }
+
+mapDocumentItem : ( DocumentItemData -> DocumentItemData ) -> Item -> Item
+mapDocumentItem f item =
+    case item.details of
+        DocumentItem data ->
+            let
+                newDetails =
+                    DocumentItem ( f data )
+                
+                newItem =
+                    { item
+                        | details = newDetails
+                    }
+            in
+            newItem
+        
+        _ ->
+            item
 
 init : ( Model, Cmd Msg )
 init =
@@ -54,6 +75,7 @@ init =
             , details =
                 DocumentItem
                     { text = "Hello, world!"
+                    , workingText = Nothing
                     }
             }
         
@@ -76,28 +98,92 @@ init =
 
 
 type Msg
-    = UserEditItem String
+    = UserViewItem String
+    | UserEditItem String
+    | UserEditDocumentText String String
+    | UserSaveDocumentEdit String
+    | UserCancelDocumentEdit String
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
+        UserViewItem id ->
+            let
+                setViewMode : Item -> Item
+                setViewMode item =
+                    { item | mode = ViewItemMode }
+            in
+            updateItem id setViewMode model
+            
         UserEditItem id ->
             let
-                setEditMode : Named Item -> Named Item
+                setEditMode : Item -> Item
                 setEditMode item =
                     { item | mode = EditItemMode }
-                
-                newModel =
-                    { model
-                        | items =
-                            model.items
-                                |> Dict.update id (Maybe.map setEditMode)
-                    }
             in
-            ( newModel, Cmd.none )
+            updateItem id setEditMode model
+        
+        UserEditDocumentText id newText ->
+            let
+                setDocumentText : Item -> Item
+                setDocumentText item =
+                    let
+                        f data =
+                            { data
+                                | workingText = Just newText
+                            }
+                    in
+                    mapDocumentItem f item
+            in
+            updateItem id setDocumentText model
+        
+        UserSaveDocumentEdit id ->
+            let
+                saveDocumentEdit : Item -> Item
+                saveDocumentEdit item =
+                    let
+                        f data =
+                            { data
+                                | text =
+                                    data.workingText
+                                        |> Maybe.withDefault data.text
+                                , workingText = Nothing
+                            }
+                    in
+                    mapDocumentItem f item
+                        |> (\i -> { i | mode = ViewItemMode })
+            in
+            updateItem id saveDocumentEdit model
+        
+        UserCancelDocumentEdit id ->
+            let
+                cancelDocumentEdit : Item -> Item
+                cancelDocumentEdit item =
+                    let
+                        f data =
+                            { data
+                                | text = data.text
+                                , workingText = Nothing
+                            }
+                    in
+                    mapDocumentItem f item
+                        |> (\i -> { i | mode = ViewItemMode })
+            in
+            updateItem id cancelDocumentEdit model
 
 
+updateItem : String -> ( Item -> Item ) -> Model -> ( Model, Cmd msg )
+updateItem id f model =
+    let
+        newModel =
+            { model
+                | items =
+                    model.items
+                        |> Dict.update id ( Maybe.map f )
+            }
+    in
+    ( newModel, Cmd.none )
 
 ---- VIEW ----
 
@@ -116,7 +202,7 @@ view model =
             ( List.map ( viewItemReference model.items ) model.bundle )
         )
 
-viewItemReference : Dict String ( Named Item ) -> String -> Element Msg
+viewItemReference : Dict String Item -> String -> Element Msg
 viewItemReference items ref =
     let
         item : Named Item
@@ -166,6 +252,7 @@ viewItemReference items ref =
                     ]
                     [ Element.el
                         [ Element.alignLeft
+                        , Element.Font.bold
                         ]
                         ( Element.text fullyQualifiedName )
                     , Element.Input.button
@@ -179,7 +266,7 @@ viewItemReference items ref =
                     [ Element.padding 5
                     , Element.width <| Element.fill
                     ]
-                    ( viewItemDetails item.details )
+                    ( viewViewItemDetails item.details )
                 ]
         
         EditItemMode ->
@@ -192,6 +279,7 @@ viewItemReference items ref =
                     ]
                     [ Element.el
                         [ Element.alignLeft
+                        , Element.Font.bold
                         ]
                         ( Element.text fullyQualifiedName )
                     ]
@@ -199,35 +287,69 @@ viewItemReference items ref =
                     [ Element.padding 5
                     , Element.width <| Element.fill
                     ]
-                    ( viewItemDetails item.details )
+                    ( viewEditItemDetails item.id item.details )
                 , Element.row
-                    []
+                    [ Element.padding 5
+                    , Element.spacing 10
+                    ]
                     [ Element.Input.button
-                        []
-                        { onPress = Nothing
+                        [ Element.Background.color <| Element.rgb255 75 150 75
+                        , Element.Font.color <| Element.rgb255 225 225 225
+                        , Element.padding 5
+                        , Element.Font.bold
+                        ]
+                        { onPress = Just <| UserSaveDocumentEdit item.id
                         , label = Element.text "Save"
                         }
                     , Element.Input.button
-                        []
-                        { onPress = Nothing
+                        [ Element.Background.color <| Element.rgb255 150 75 75
+                        , Element.Font.color <| Element.rgb255 225 225 225
+                        , Element.padding 5
+                        , Element.Font.bold
+                        ]
+                        { onPress = Just <| UserCancelDocumentEdit item.id
                         , label = Element.text "Cancel"
                         }
                     ]
                 ]
 
-viewItemDetails : ItemDetails -> Element msg
-viewItemDetails details =
+viewViewItemDetails : ItemDetails -> Element msg
+viewViewItemDetails details =
     case details of
         MissingItem ->
             Element.none
         
         DocumentItem data ->
-            viewDocumentItemData data
+            viewViewDocumentItemData data
 
-viewDocumentItemData : DocumentItemData -> Element msg
-viewDocumentItemData data =
+viewViewDocumentItemData : DocumentItemData -> Element msg
+viewViewDocumentItemData data =
     Element.text data.text
 
+viewEditItemDetails : String -> ItemDetails -> Element Msg
+viewEditItemDetails id details =
+    case details of
+        MissingItem ->
+            Element.none
+        
+        DocumentItem data ->
+            viewEditDocumentItemData id data
+
+viewEditDocumentItemData : String -> DocumentItemData -> Element Msg
+viewEditDocumentItemData id data =
+    Element.Input.multiline
+        []
+        { onChange = UserEditDocumentText id
+        , text =
+            data.workingText
+                |> Maybe.withDefault data.text
+        , placeholder = Nothing
+        , label =
+            Element.Input.labelAbove
+                []
+                ( Element.text "Document text" )
+        , spellcheck = True
+        }
 
 ---- PROGRAM ----
 
