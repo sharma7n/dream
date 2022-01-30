@@ -8,7 +8,9 @@ import Element exposing (Element)
 import Element.Background
 import Element.Border
 import Element.Font
+import Element.Input
 
+import Ui
 
 ---- MODEL ----
 
@@ -19,18 +21,48 @@ type alias Model =
     }
 
 type alias Named a =
-    { id : String
-    , names : List String
-    , value : a
+    { a
+        | id : String
+        , names : List String
     }
 
-type Item
+type alias Item =
+    { id : String
+    , names : List String
+    , mode : ItemMode
+    , details : ItemDetails
+    }
+
+type ItemMode
+    = ViewItemMode
+    | EditItemMode
+
+type ItemDetails
     = MissingItem
     | DocumentItem DocumentItemData
 
 type alias DocumentItemData =
     { text : String
+    , workingText : Maybe String
     }
+
+mapDocumentItem : ( DocumentItemData -> DocumentItemData ) -> Item -> Item
+mapDocumentItem f item =
+    case item.details of
+        DocumentItem data ->
+            let
+                newDetails =
+                    DocumentItem ( f data )
+                
+                newItem =
+                    { item
+                        | details = newDetails
+                    }
+            in
+            newItem
+        
+        _ ->
+            item
 
 init : ( Model, Cmd Msg )
 init =
@@ -39,16 +71,19 @@ init =
         initItem =
             { id = "1"
             , names = []
-            , value = DocumentItem
-                { text = "Hello, world!"
-                }
+            , mode = ViewItemMode
+            , details =
+                DocumentItem
+                    { text = "Hello, world!"
+                    , workingText = Nothing
+                    }
             }
         
         initModel : Model
         initModel =
             { items =
                 Dict.fromList
-                    [ ( "1", initItem)
+                    [ ( "1", initItem )
                     ]
             , bundle =
                 [ "1"
@@ -63,14 +98,92 @@ init =
 
 
 type Msg
-    = NoOp
+    = UserViewItem String
+    | UserEditItem String
+    | UserEditDocumentText String String
+    | UserSaveDocumentEdit String
+    | UserCancelDocumentEdit String
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
-    ( model, Cmd.none )
+    case msg of
+        UserViewItem id ->
+            let
+                setViewMode : Item -> Item
+                setViewMode item =
+                    { item | mode = ViewItemMode }
+            in
+            updateItem id setViewMode model
+            
+        UserEditItem id ->
+            let
+                setEditMode : Item -> Item
+                setEditMode item =
+                    { item | mode = EditItemMode }
+            in
+            updateItem id setEditMode model
+        
+        UserEditDocumentText id newText ->
+            let
+                setDocumentText : Item -> Item
+                setDocumentText item =
+                    let
+                        f data =
+                            { data
+                                | workingText = Just newText
+                            }
+                    in
+                    mapDocumentItem f item
+            in
+            updateItem id setDocumentText model
+        
+        UserSaveDocumentEdit id ->
+            let
+                saveDocumentEdit : Item -> Item
+                saveDocumentEdit item =
+                    let
+                        f data =
+                            { data
+                                | text =
+                                    data.workingText
+                                        |> Maybe.withDefault data.text
+                                , workingText = Nothing
+                            }
+                    in
+                    mapDocumentItem f item
+                        |> (\i -> { i | mode = ViewItemMode })
+            in
+            updateItem id saveDocumentEdit model
+        
+        UserCancelDocumentEdit id ->
+            let
+                cancelDocumentEdit : Item -> Item
+                cancelDocumentEdit item =
+                    let
+                        f data =
+                            { data
+                                | text = data.text
+                                , workingText = Nothing
+                            }
+                    in
+                    mapDocumentItem f item
+                        |> (\i -> { i | mode = ViewItemMode })
+            in
+            updateItem id cancelDocumentEdit model
 
 
+updateItem : String -> ( Item -> Item ) -> Model -> ( Model, Cmd msg )
+updateItem id f model =
+    let
+        newModel =
+            { model
+                | items =
+                    model.items
+                        |> Dict.update id ( Maybe.map f )
+            }
+    in
+    ( newModel, Cmd.none )
 
 ---- VIEW ----
 
@@ -83,11 +196,13 @@ view model =
             ]
         ]
         ( Element.column
-            []
+            [ Element.padding 10
+            , Element.spacing 10
+            ]
             ( List.map ( viewItemReference model.items ) model.bundle )
         )
 
-viewItemReference : Dict String ( Named Item ) -> String -> Element msg
+viewItemReference : Dict String Item -> String -> Element Msg
 viewItemReference items ref =
     let
         item : Named Item
@@ -97,7 +212,8 @@ viewItemReference items ref =
                 |> Maybe.withDefault
                     { id = ""
                     , names = []
-                    , value = MissingItem
+                    , mode = ViewItemMode
+                    , details = MissingItem
                     }
         
         readableName : String
@@ -108,7 +224,7 @@ viewItemReference items ref =
         
         itemClassName : String
         itemClassName =
-            case item.value of
+            case item.details of
                 MissingItem ->
                     "MISSING"
                 
@@ -125,38 +241,115 @@ viewItemReference items ref =
             ]
                 |> String.join " "
     in
-    Element.column
-        [ Element.Font.alignLeft
-        , Element.Border.color <| Element.rgb255 0 0 0
-        , Element.Border.width 1
-        ]
-        [ Element.el
-            [ Element.padding 5
-            , Element.width <| Element.fill
-            , Element.Background.color <| Element.rgb255 75 75 125
-            , Element.Font.color <| Element.rgb255 225 225 225
-            ]
-            ( Element.text fullyQualifiedName )
-        , Element.el
-            [ Element.padding 5
-            , Element.width <| Element.fill
-            ]
-            ( viewItemValue item.value )
-        ]
+    case item.mode of
+        ViewItemMode ->
+            Ui.cell
+                [ Element.row
+                    [ Element.padding 5
+                    , Element.width <| Element.fill
+                    , Element.Background.color <| Element.rgb255 75 75 75
+                    , Element.Font.color <| Element.rgb255 225 225 225
+                    ]
+                    [ Element.el
+                        [ Element.alignLeft
+                        , Element.Font.bold
+                        ]
+                        ( Element.text fullyQualifiedName )
+                    , Element.Input.button
+                        [ Element.alignRight
+                        ]
+                        { onPress = Just <| UserEditItem item.id
+                        , label = Element.text "✏️"
+                        }
+                    ]
+                , Element.el
+                    [ Element.padding 5
+                    , Element.width <| Element.fill
+                    ]
+                    ( viewViewItemDetails item.details )
+                ]
+        
+        EditItemMode ->
+            Ui.cell
+                [ Element.row
+                    [ Element.padding 5
+                    , Element.width <| Element.fill
+                    , Element.Background.color <| Element.rgb255 75 75 75
+                    , Element.Font.color <| Element.rgb255 225 225 225
+                    ]
+                    [ Element.el
+                        [ Element.alignLeft
+                        , Element.Font.bold
+                        ]
+                        ( Element.text fullyQualifiedName )
+                    ]
+                , Element.el
+                    [ Element.padding 5
+                    , Element.width <| Element.fill
+                    ]
+                    ( viewEditItemDetails item.id item.details )
+                , Element.row
+                    [ Element.padding 5
+                    , Element.spacing 10
+                    ]
+                    [ Element.Input.button
+                        [ Element.Background.color <| Element.rgb255 75 150 75
+                        , Element.Font.color <| Element.rgb255 225 225 225
+                        , Element.padding 5
+                        , Element.Font.bold
+                        ]
+                        { onPress = Just <| UserSaveDocumentEdit item.id
+                        , label = Element.text "Save"
+                        }
+                    , Element.Input.button
+                        [ Element.Background.color <| Element.rgb255 150 75 75
+                        , Element.Font.color <| Element.rgb255 225 225 225
+                        , Element.padding 5
+                        , Element.Font.bold
+                        ]
+                        { onPress = Just <| UserCancelDocumentEdit item.id
+                        , label = Element.text "Cancel"
+                        }
+                    ]
+                ]
 
-viewItemValue : Item -> Element msg
-viewItemValue item =
-    case item of
+viewViewItemDetails : ItemDetails -> Element msg
+viewViewItemDetails details =
+    case details of
         MissingItem ->
             Element.none
         
         DocumentItem data ->
-            viewDocumentItemData data
+            viewViewDocumentItemData data
 
-viewDocumentItemData : DocumentItemData -> Element msg
-viewDocumentItemData data =
+viewViewDocumentItemData : DocumentItemData -> Element msg
+viewViewDocumentItemData data =
     Element.text data.text
 
+viewEditItemDetails : String -> ItemDetails -> Element Msg
+viewEditItemDetails id details =
+    case details of
+        MissingItem ->
+            Element.none
+        
+        DocumentItem data ->
+            viewEditDocumentItemData id data
+
+viewEditDocumentItemData : String -> DocumentItemData -> Element Msg
+viewEditDocumentItemData id data =
+    Element.Input.multiline
+        []
+        { onChange = UserEditDocumentText id
+        , text =
+            data.workingText
+                |> Maybe.withDefault data.text
+        , placeholder = Nothing
+        , label =
+            Element.Input.labelAbove
+                []
+                ( Element.text "Document text" )
+        , spellcheck = True
+        }
 
 ---- PROGRAM ----
 
