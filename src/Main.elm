@@ -28,6 +28,26 @@ type alias Named a =
         , names : List String
     }
 
+unambiguousName : Named a -> String
+unambiguousName named =
+    let
+        firstName =
+            named.names
+                |> List.head
+    in
+    case firstName of
+        Nothing ->
+            "<anonymous> @ " ++ String.slice 0 6 named.id
+        
+        Just name ->
+            case name of
+                "" ->
+                    "<anonymous> @ " ++ String.slice 0 6 named.id
+                
+                _ ->
+                    name
+
+
 type alias Item =
     { id : String
     , names : List String
@@ -157,6 +177,7 @@ update msg model =
                 cancelEdit item =
                     { item
                         | workingName = Nothing
+                        , mode = ViewItemMode
                         , details = cancelItemDetails item.details
                     }
             in
@@ -292,17 +313,17 @@ view model =
                 , label = Element.text "Add Document"
                 }
               ]
-              ++ List.map ( viewItemReference model.items ) model.bundle
+              ++ List.map ( viewItemReference model ) model.bundle
 
             )
         )
 
-viewItemReference : Dict String Item -> String -> Element Msg
-viewItemReference items ref =
+viewItemReference : Model -> String -> Element Msg
+viewItemReference model ref =
     let
         item : Named Item
         item =
-            items
+            model.items
                 |> Dict.get ref
                 |> Maybe.withDefault
                     { id = ""
@@ -325,15 +346,13 @@ viewItemReference items ref =
                     "MISSING"
                 
                 DocumentItem _ ->
-                    "Document"
+                    "📄 Document"
         
         fullyQualifiedName : String
         fullyQualifiedName =
             [ itemClassName
             , ":"
-            , readableName
-            , "@"
-            , String.slice 0 6 item.id
+            , unambiguousName item
             ]
                 |> String.join " "
     in
@@ -383,19 +402,14 @@ viewItemReference items ref =
                         []
                         { onChange = UserSetItemName item.id
                         , text =
-                            let
-                                currentName =
+                            case item.workingName of
+                                Nothing ->
                                     item.names
                                         |> List.head
+                                        |> Maybe.withDefault ""
                                 
-                            in
-                                case currentName of
-                                    Nothing ->
-                                        item.workingName
-                                            |> Maybe.withDefault ""
-                                    
-                                    Just solidName ->
-                                        solidName
+                                Just name ->
+                                    name
                         , placeholder = Nothing
                         , label =
                             Element.Input.labelLeft
@@ -473,7 +487,7 @@ viewEditDocumentItemData id data =
         , label =
             Element.Input.labelAbove
                 []
-                ( Element.text "Document text" )
+                ( Element.none )
         , spellcheck = True
         }
 
