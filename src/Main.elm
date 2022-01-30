@@ -12,6 +12,7 @@ import Element.Font
 import Element.Input
 import UUID exposing (UUID)
 
+import Document exposing (Document)
 import Ui
 
 ---- MODEL ----
@@ -62,14 +63,9 @@ type ItemMode
 
 type ItemDetails
     = MissingItem
-    | DocumentItem DocumentItemData
+    | DocumentItem Document.DocumentItemData
 
-type alias DocumentItemData =
-    { text : String
-    , workingText : Maybe String
-    }
-
-mapDocumentItem : ( DocumentItemData -> DocumentItemData ) -> Item -> Item
+mapDocumentItem : ( Document.DocumentItemData -> Document.DocumentItemData ) -> Item -> Item
 mapDocumentItem f item =
     case item.details of
         DocumentItem data ->
@@ -97,7 +93,6 @@ init =
             }
     in
     ( initModel, Cmd.none )
-
 
 
 ---- UPDATE ----
@@ -216,6 +211,9 @@ update msg model =
                     , details =
                         DocumentItem
                             { text = ""
+                            , document =
+                                { lines = []
+                                }
                             , workingText = Nothing
                             }
                     }
@@ -268,13 +266,25 @@ saveItemDetails details =
             details
         
         DocumentItem data ->
-            DocumentItem
-                { data
-                    | text =
-                        data.workingText
-                            |> Maybe.withDefault data.text
-                    , workingText = Nothing
-                }
+            let
+                newText =
+                    data.workingText
+                        |> Maybe.withDefault data.text
+
+                parsed =
+                    Document.parseDocument newText
+            in
+            case parsed of
+                    Err errors ->
+                        details
+                    
+                    Ok document ->
+                        DocumentItem
+                            { data
+                                | text = newText
+                                , document = document
+                                , workingText = Nothing
+                            }
 
 cancelItemDetails : ItemDetails -> ItemDetails
 cancelItemDetails details =
@@ -294,7 +304,15 @@ cancelItemDetails details =
 
 view : Model -> Html Msg
 view model =
-    Element.layout
+    Element.layoutWith
+        { options =
+            [ Element.focusStyle
+                { borderColor = Just <| Element.rgb255 240 240 250
+                , backgroundColor = Just <| Element.rgb255 240 240 250
+                , shadow = Nothing
+                }
+            ]
+        }
         [ Element.Font.family
             [ Element.Font.monospace
             ]
@@ -380,7 +398,7 @@ viewItemReference model ref =
                         [ Element.alignRight
                         ]
                         { onPress = Just <| UserDeleteDocumentItem item.id
-                        , label = Element.text "❌"
+                        , label = Element.text "🗑️"
                         }
                     ]
                 , Element.el
@@ -399,7 +417,8 @@ viewItemReference model ref =
                     , Element.Font.color <| Element.rgb255 225 225 225
                     ]
                     [ Element.Input.text
-                        []
+                        [ Element.Font.color <| Element.rgb255 0 0 0
+                        ]
                         { onChange = UserSetItemName item.id
                         , text =
                             case item.workingName of
@@ -414,13 +433,14 @@ viewItemReference model ref =
                         , label =
                             Element.Input.labelLeft
                                 []
-                                ( Element.text "Item Name" )
+                                ( Element.text <| itemClassName ++ " Name" )
                         }
+                    , Element.text <| "Item Id: " ++ item.id
                     , Element.Input.button
                         [ Element.alignRight
                         ]
                         { onPress = Just <| UserDeleteDocumentItem item.id
-                        , label = Element.text "❌"
+                        , label = Element.text "🗑️"
                         }
                     ]
                 , Element.el
@@ -462,9 +482,36 @@ viewViewItemDetails details =
         DocumentItem data ->
             viewViewDocumentItemData data
 
-viewViewDocumentItemData : DocumentItemData -> Element msg
+viewViewDocumentItemData : Document.DocumentItemData -> Element msg
 viewViewDocumentItemData data =
-    Element.text data.text
+    Element.textColumn
+        [ Element.Font.family
+            [ Element.Font.serif
+            ]
+        ]
+        ( List.map viewDocumentLine data.document.lines )
+
+viewDocumentLine : Document.DocumentLine -> Element msg
+viewDocumentLine line =
+    case line of
+        Document.BlankDocumentLine ->
+            Element.paragraph
+                []
+                []
+        
+        Document.Header1DocumentLine content ->
+            Element.paragraph
+                [ Element.Font.bold
+                , Element.Font.size 20
+                ]
+                [ Element.text content
+                ]
+        
+        Document.ParagraphDocumentLine content ->
+            Element.paragraph
+                []
+                [ Element.text content
+                ]
 
 viewEditItemDetails : String -> ItemDetails -> Element Msg
 viewEditItemDetails id details =
@@ -475,7 +522,7 @@ viewEditItemDetails id details =
         DocumentItem data ->
             viewEditDocumentItemData id data
 
-viewEditDocumentItemData : String -> DocumentItemData -> Element Msg
+viewEditDocumentItemData : String -> Document.DocumentItemData -> Element Msg
 viewEditDocumentItemData id data =
     Element.Input.multiline
         []
@@ -485,9 +532,7 @@ viewEditDocumentItemData id data =
                 |> Maybe.withDefault data.text
         , placeholder = Nothing
         , label =
-            Element.Input.labelAbove
-                []
-                ( Element.none )
+            Element.Input.labelHidden "Document Data"
         , spellcheck = True
         }
 
