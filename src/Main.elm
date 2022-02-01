@@ -3,6 +3,7 @@ module Main exposing (..)
 import Browser
 import Dict exposing (Dict)
 import Html exposing (Html)
+import Parser exposing (Parser, (|=), (|.))
 import Random exposing (Generator)
 
 import Element exposing (Element)
@@ -12,7 +13,6 @@ import Element.Font
 import Element.Input
 import UUID exposing (UUID)
 
-import Document exposing (Document)
 import Ui
 
 ---- MODEL ----
@@ -60,12 +60,13 @@ type alias Item =
 type ItemMode
     = ViewItemMode
     | EditItemMode
+    | AddItemMode
 
 type ItemDetails
     = MissingItem
-    | DocumentItem Document.DocumentItemData
+    | DocumentItem DocumentItemData
 
-mapDocumentItem : ( Document.DocumentItemData -> Document.DocumentItemData ) -> Item -> Item
+mapDocumentItem : ( DocumentItemData -> DocumentItemData ) -> Item -> Item
 mapDocumentItem f item =
     case item.details of
         DocumentItem data ->
@@ -85,15 +86,110 @@ mapDocumentItem f item =
 
 init : ( Model, Cmd Msg )
 init =
-    let 
+    let
         initModel : Model
         initModel =
             { items = Dict.empty
             , bundle = []
             }
+        
+        initAddCommand =
+            Random.generate SystemGotDocumentItemUUID UUID.generator
     in
-    ( initModel, Cmd.none )
+    ( initModel, initAddCommand )
 
+type alias DocumentItemData =
+    { text : String
+    , document : Document
+    , workingText : Maybe String
+    }
+
+type alias Document =
+    { lines : List DocumentLine
+    }
+
+type DocumentLine
+    = BlankDocumentLine
+    | Header1DocumentLine String
+    | ParagraphDocumentLine String
+
+parseDocument : String -> Result ( List ParseDocumentError ) Document
+parseDocument rawText =
+    case Parser.run documentParser rawText of
+        Err _ ->
+            Err [ ParseDocumentError ]
+        
+        Ok doc ->
+            Ok doc
+
+type ParseDocumentError
+    = ParseDocumentError
+
+documentParser : Parser Document
+documentParser =
+    let
+        emptyDocument =
+            { lines = []
+            }
+        
+        appendDocumentLine : DocumentLine -> Document -> Document
+        appendDocumentLine l d =
+            { d
+                | lines =
+                    l :: d.lines
+            }
+        
+        finalizeDocument : Document -> Document
+        finalizeDocument d =
+            { d
+                | lines =
+                    List.reverse d.lines
+            }
+        
+        documentLoopParser =
+            Parser.loop emptyDocument (\doc ->
+                Parser.oneOf
+                    [ Parser.succeed (\line -> Parser.Loop <| appendDocumentLine line doc)
+                        |= lineParser
+                        |. Parser.spaces
+                        |. Parser.symbol "\n"
+                        |. Parser.spaces
+                    , Parser.succeed ()
+                        |> Parser.map (\_ -> Parser.Done <| finalizeDocument doc)
+                    ]
+            )
+    in
+    lineParser
+        |> Parser.andThen (\line1 ->
+            Parser.succeed <|
+                { lines =
+                    [ line1
+                    ]
+                }
+        )
+
+
+
+lineParser : Parser DocumentLine
+lineParser =
+    let
+        textParser : Parser String
+        textParser =
+            Parser.getChompedString <|
+                Parser.succeed ()
+                    |. Parser.chompUntilEndOr "\n"
+                    |. Parser.end
+    in
+    Parser.oneOf
+        [ Parser.succeed Header1DocumentLine
+            |. Parser.symbol "#"
+            |. Parser.spaces
+            |= textParser
+        , Parser.succeed ParagraphDocumentLine
+            |= textParser
+        , Parser.succeed BlankDocumentLine
+            |. Parser.spaces
+        ]
 
 ---- UPDATE ----
 
@@ -163,8 +259,14 @@ update msg model =
                         , mode = ViewItemMode
                         , details = saveItemDetails item.details
                     }
+                
+                ( newModel, _ ) =
+                    updateItem id saveEdit model
+                
+                initAddCommand =
+                    Random.generate SystemGotDocumentItemUUID UUID.generator
             in
-            updateItem id saveEdit model
+            ( newModel, initAddCommand )
         
         UserCancelEdit id ->
             let
@@ -207,7 +309,7 @@ update msg model =
                     { id = id
                     , names = []
                     , workingName = Nothing
-                    , mode = EditItemMode
+                    , mode = AddItemMode
                     , details =
                         DocumentItem
                             { text = ""
@@ -272,11 +374,20 @@ saveItemDetails details =
                         |> Maybe.withDefault data.text
 
                 parsed =
-                    Document.parseDocument newText
+                    parseDocument newText
             in
             case parsed of
                     Err errors ->
-                        details
+                        DocumentItem
+                            { data
+                                | text = newText
+                                , document =
+                                    { lines =
+                                        [ ParagraphDocumentLine "ERROR"
+                                        ]
+                                    }
+                                , workingText = Nothing
+                            }
                     
                     Ok document ->
                         DocumentItem
@@ -321,19 +432,7 @@ view model =
             [ Element.padding 10
             , Element.spacing 10
             ]
-            ( [ Element.Input.button
-                [ Element.Background.color <| Element.rgb255 75 150 75
-                , Element.Font.color <| Element.rgb255 225 225 225
-                , Element.padding 5
-                , Element.Font.bold
-                ]
-                { onPress = Just <| UserAddDocumentItem
-                , label = Element.text "Add Document"
-                }
-              ]
-              ++ List.map ( viewItemReference model ) model.bundle
-
-            )
+            ( List.map ( viewItemReference model ) model.bundle )
         )
 
 viewItemReference : Model -> String -> Element Msg
@@ -473,6 +572,56 @@ viewItemReference model ref =
                     ]
                 ]
 
+        AddItemMode ->
+            Ui.cell
+                [ Element.row
+                    [ Element.padding 5
+                    , Element.width <| Element.fill
+                    , Element.Background.color <| Element.rgb255 75 75 75
+                    , Element.Font.color <| Element.rgb255 225 225 225
+                    ]
+                    [ Element.Input.text
+                        [ Element.Font.color <| Element.rgb255 0 0 0
+                        ]
+                        { onChange = UserSetItemName item.id
+                        , text =
+                            case item.workingName of
+                                Nothing ->
+                                    item.names
+                                        |> List.head
+                                        |> Maybe.withDefault ""
+                                
+                                Just name ->
+                                    name
+                        , placeholder = Nothing
+                        , label =
+                            Element.Input.labelLeft
+                                []
+                                ( Element.text <| itemClassName ++ " Name" )
+                        }
+                    , Element.text <| "Item Id: " ++ item.id
+                    ]
+                , Element.el
+                    [ Element.padding 5
+                    , Element.width <| Element.fill
+                    ]
+                    ( viewEditItemDetails item.id item.details )
+                , Element.row
+                    [ Element.padding 5
+                    , Element.spacing 10
+                    ]
+                    [ Element.Input.button
+                        [ Element.Background.color <| Element.rgb255 75 150 75
+                        , Element.Font.color <| Element.rgb255 225 225 225
+                        , Element.padding 5
+                        , Element.Font.bold
+                        ]
+                        { onPress = Just <| UserSaveEdit item.id
+                        , label = Element.text "Save"
+                        }
+                    ]
+                ]
+
 viewViewItemDetails : ItemDetails -> Element msg
 viewViewItemDetails details =
     case details of
@@ -482,7 +631,7 @@ viewViewItemDetails details =
         DocumentItem data ->
             viewViewDocumentItemData data
 
-viewViewDocumentItemData : Document.DocumentItemData -> Element msg
+viewViewDocumentItemData : DocumentItemData -> Element msg
 viewViewDocumentItemData data =
     Element.textColumn
         [ Element.Font.family
@@ -491,15 +640,15 @@ viewViewDocumentItemData data =
         ]
         ( List.map viewDocumentLine data.document.lines )
 
-viewDocumentLine : Document.DocumentLine -> Element msg
+viewDocumentLine : DocumentLine -> Element msg
 viewDocumentLine line =
     case line of
-        Document.BlankDocumentLine ->
+        BlankDocumentLine ->
             Element.paragraph
                 []
                 []
         
-        Document.Header1DocumentLine content ->
+        Header1DocumentLine content ->
             Element.paragraph
                 [ Element.Font.bold
                 , Element.Font.size 20
@@ -507,7 +656,7 @@ viewDocumentLine line =
                 [ Element.text content
                 ]
         
-        Document.ParagraphDocumentLine content ->
+        ParagraphDocumentLine content ->
             Element.paragraph
                 []
                 [ Element.text content
@@ -522,7 +671,7 @@ viewEditItemDetails id details =
         DocumentItem data ->
             viewEditDocumentItemData id data
 
-viewEditDocumentItemData : String -> Document.DocumentItemData -> Element Msg
+viewEditDocumentItemData : String -> DocumentItemData -> Element Msg
 viewEditDocumentItemData id data =
     Element.Input.multiline
         []
