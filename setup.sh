@@ -1,1 +1,1 @@
-npm i -g elm elm-format create-elm-app
+npm i -g elm elm-format create-elm-app elm-test

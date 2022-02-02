@@ -153,6 +153,7 @@ documentParser =
                 Parser.oneOf
                     [ Parser.succeed (\line -> Parser.Loop <| appendDocumentLine line doc)
                         |= lineParser
+                        |. Parser.getOffset
                         |. Parser.spaces
                         |. Parser.symbol "\n"
                         |. Parser.spaces
@@ -160,17 +161,18 @@ documentParser =
                         |> Parser.map (\_ -> Parser.Done <| finalizeDocument doc)
                     ]
             )
+        
+        simpleParser =
+            lineParser
+            |> Parser.andThen (\line1 ->
+                Parser.succeed <|
+                    { lines =
+                        [ line1
+                        ]
+                    }
+            )
     in
-    lineParser
-        |> Parser.andThen (\line1 ->
-            Parser.succeed <|
-                { lines =
-                    [ line1
-                    ]
-                }
-        )
-
-
+    documentLoopParser
 
 lineParser : Parser DocumentLine
 lineParser =
