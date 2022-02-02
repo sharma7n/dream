@@ -21,6 +21,7 @@ import Ui
 type alias Model =
     { items : Dict String ( Named Item )
     , bundle : List String
+    , workingCell : Maybe String
     }
 
 type alias Named a =
@@ -91,6 +92,7 @@ init =
         initModel =
             { items = Dict.empty
             , bundle = []
+            , workingCell = Nothing
             }
         
         initAddCommand =
@@ -198,13 +200,16 @@ type Msg
     = UserViewItem String
     | UserEditItem String
     | UserEditDocumentText String String
-    | UserSaveEdit String
+    | UserSaveEdit CellType String
     | UserCancelEdit String
     | UserAddDocumentItem
     | UserDeleteDocumentItem String
     | SystemGotDocumentItemUUID UUID
     | UserSetItemName String String
 
+type CellType
+    = BundleCell
+    | WorkingCell
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
@@ -239,7 +244,7 @@ update msg model =
             in
             updateItem id setDocumentText model
         
-        UserSaveEdit id ->
+        UserSaveEdit cellType id ->
             let
                 saveEdit : Item -> Item
                 saveEdit item =
@@ -260,11 +265,40 @@ update msg model =
                         , details = saveItemDetails item.details
                     }
                 
-                ( newModel, _ ) =
-                    updateItem id saveEdit model
+                newBundle =
+                    case cellType of
+                        BundleCell ->
+                            model.bundle
+                        
+                        WorkingCell ->
+                            List.reverse <|
+                                id :: model.bundle
+                
+                newWorkingCell =
+                    case cellType of
+                        BundleCell ->
+                            model.workingCell
+                        
+                        WorkingCell ->
+                            Nothing
+
+
+                newModel =
+                    { model
+                        | items =
+                            model.items
+                                |> Dict.update id ( Maybe.map saveEdit )
+                        , bundle = newBundle
+                        , workingCell = newWorkingCell
+                    }
                 
                 initAddCommand =
-                    Random.generate SystemGotDocumentItemUUID UUID.generator
+                    case cellType of
+                        BundleCell ->
+                            Cmd.none
+                        
+                        WorkingCell ->
+                            Random.generate SystemGotDocumentItemUUID UUID.generator
             in
             ( newModel, initAddCommand )
         
@@ -325,8 +359,8 @@ update msg model =
                         | items =
                             model.items
                                 |> Dict.insert id newItem
-                        , bundle =
-                            model.bundle ++ [ id ]
+                        , workingCell =
+                            Just id
                     }
             in
             ( newModel, Cmd.none )
@@ -415,6 +449,17 @@ cancelItemDetails details =
 
 view : Model -> Html Msg
 view model =
+    let
+        maybeToList : Maybe a -> List a
+        maybeToList m =
+            case m of
+                Nothing ->
+                    []
+                
+                Just single ->
+                    [ single
+                    ]
+    in
     Element.layoutWith
         { options =
             [ Element.focusStyle
@@ -432,7 +477,9 @@ view model =
             [ Element.padding 10
             , Element.spacing 10
             ]
-            ( List.map ( viewItemReference model ) model.bundle )
+            ( ( List.map ( viewItemReference model ) model.bundle )
+              ++ ( List.map ( viewItemReference model ) ( maybeToList model.workingCell ) )
+            )
         )
 
 viewItemReference : Model -> String -> Element Msg
@@ -557,7 +604,7 @@ viewItemReference model ref =
                         , Element.padding 5
                         , Element.Font.bold
                         ]
-                        { onPress = Just <| UserSaveEdit item.id
+                        { onPress = Just <| UserSaveEdit BundleCell item.id
                         , label = Element.text "Save"
                         }
                     , Element.Input.button
@@ -616,7 +663,7 @@ viewItemReference model ref =
                         , Element.padding 5
                         , Element.Font.bold
                         ]
-                        { onPress = Just <| UserSaveEdit item.id
+                        { onPress = Just <| UserSaveEdit WorkingCell item.id
                         , label = Element.text "Save"
                         }
                     ]
